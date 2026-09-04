@@ -1,0 +1,502 @@
+{
+  "id": "promptscale-example-api",
+  "revision": 1,
+  "last_node_id": 10,
+  "last_link_id": 22,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Note",
+      "pos": [
+        80,
+        900
+      ],
+      "size": [
+        440,
+        200
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "【PromptScale 示例工作流 · 在线API】\n① 加载器默认 DeepSeek,在「API密钥」填 Key 后按 R 刷新选模型\n   也可换 Ollama/LM Studio 等本地服务;地址留空用官方/默认端点\n② 工作节点写一行想法 → 换掉 Checkpoint 里的模型文件名,Queue 即可\n③ 温度/top_p/seed 在加载器上;云端审查可能压回 NSFW 档\n④ ⚠ API密钥会存进工作流JSON,分享前删掉\n⑤ 想用本地 GGUF:把本加载器换成「PromptScale 本地GGUF 加载器」,下游连线不动"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "PSAPILoader",
+      "pos": [
+        80,
+        120
+      ],
+      "size": [
+        480,
+        340
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "ps模型",
+          "type": "PSLLM",
+          "links": [
+            12
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PSAPILoader"
+      },
+      "widgets_values": [
+        "DeepSeek",
+        "",
+        "",
+        "deepseek-chat",
+        "",
+        0.8,
+        2048,
+        1.0,
+        0,
+        600,
+        "直连"
+      ],
+      "title": "PromptScale API 加载器"
+    },
+    {
+      "id": 3,
+      "type": "PSFullScale",
+      "pos": [
+        640,
+        120
+      ],
+      "size": [
+        520,
+        300
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "ps模型",
+          "type": "PSLLM",
+          "link": 12,
+          "widget": {
+            "name": "ps模型"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "links": [
+            13
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "info",
+          "type": "STRING",
+          "links": [],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PSFullScale"
+      },
+      "widgets_values": [
+        "a candid photo of a young woman reading by a warm window light",
+        "expand — 想法扩写成完整提示词",
+        "Auto (按输入词自动判定)",
+        "English_Master_v2.md",
+        ""
+      ]
+    },
+    {
+      "id": 4,
+      "type": "CheckpointLoaderSimple",
+      "pos": [
+        80,
+        560
+      ],
+      "size": [
+        360,
+        100
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            16
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            14,
+            15
+          ]
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            20
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CheckpointLoaderSimple"
+      },
+      "widgets_values": [
+        "model.safetensors"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "CLIPTextEncode",
+      "pos": [
+        1240,
+        120
+      ],
+      "size": [
+        420,
+        180
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 14
+        },
+        {
+          "name": "text",
+          "type": "STRING",
+          "link": 13,
+          "widget": {
+            "name": "text"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            17
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 6,
+      "type": "CLIPTextEncode",
+      "pos": [
+        1240,
+        380
+      ],
+      "size": [
+        420,
+        180
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 15
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            18
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "lowres, bad anatomy, bad hands, worst quality, low quality"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "EmptyLatentImage",
+      "pos": [
+        1240,
+        640
+      ],
+      "size": [
+        360,
+        120
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            19
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "EmptyLatentImage"
+      },
+      "widgets_values": [
+        832,
+        1216,
+        1
+      ]
+    },
+    {
+      "id": 8,
+      "type": "KSampler",
+      "pos": [
+        1740,
+        120
+      ],
+      "size": [
+        340,
+        280
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 16
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 17
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 18
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 19
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            21
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "KSampler"
+      },
+      "widgets_values": [
+        42,
+        "fixed",
+        24,
+        5.0,
+        "euler",
+        "normal",
+        1.0
+      ]
+    },
+    {
+      "id": 9,
+      "type": "VAEDecode",
+      "pos": [
+        1740,
+        470
+      ],
+      "size": [
+        210,
+        60
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 21
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 20
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            22
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 10,
+      "type": "SaveImage",
+      "pos": [
+        2020,
+        470
+      ],
+      "size": [
+        440,
+        400
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 22
+        }
+      ],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "PromptScale"
+      ]
+    }
+  ],
+  "links": [
+    [
+      12,
+      2,
+      0,
+      3,
+      0,
+      0
+    ],
+    [
+      13,
+      3,
+      0,
+      5,
+      1,
+      0
+    ],
+    [
+      14,
+      4,
+      1,
+      5,
+      0,
+      0
+    ],
+    [
+      15,
+      4,
+      1,
+      6,
+      0,
+      0
+    ],
+    [
+      16,
+      4,
+      0,
+      8,
+      0,
+      0
+    ],
+    [
+      17,
+      5,
+      0,
+      8,
+      1,
+      0
+    ],
+    [
+      18,
+      6,
+      0,
+      8,
+      2,
+      0
+    ],
+    [
+      19,
+      7,
+      0,
+      8,
+      3,
+      0
+    ],
+    [
+      20,
+      4,
+      2,
+      9,
+      1,
+      0
+    ],
+    [
+      21,
+      8,
+      0,
+      9,
+      0,
+      0
+    ],
+    [
+      22,
+      9,
+      0,
+      10,
+      0,
+      0
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}
