@@ -106,6 +106,30 @@ class PSGGUFLoader:
                                         "tooltip": "只要出现过就惩罚。0=关闭;与频率惩罚二选一微调,别同时开大。"}),
                 "思考": ("BOOLEAN", {"default": False,
                               "tooltip": "开=保留模型思考过程(含 <think> 标记原样输出,排查用);关=请求级关闭思考(Qwen3/3.5 等推理模型)并自动剔除思维链,只留干净正文 —— 扩写任务保持关。"}),
+                "典型采样": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0,
+                                 "step": 0.01,
+                                 "tooltip": "typical_p 局部典型度过滤。1.0=关闭;0.9 左右可抑制模板化用词,让措辞更活。"}),
+                "重复窗口": ("INT", {"default": 64, "min": -1, "max": 4096,
+                               "step": 1,
+                               "tooltip": "penalty_last_n:重复惩罚只在最近 N 个 token 生效。64=llama.cpp 默认;-1=作用于全部上下文。"}),
+                "DRY倍率": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 5.0,
+                             "step": 0.05,
+                             "tooltip": "DRY 抗重复采样倍率,治复读/絮叨刹不住车最有效。0=关闭;输出越长越啰嗦时试 0.8。"}),
+                "DRY基准": ("FLOAT", {"default": 1.75, "min": 1.0, "max": 4.0,
+                            "step": 0.05,
+                            "tooltip": "DRY 惩罚基准,配合 DRY倍率 使用;1.75 为社区常用值。"}),
+                "DRY触发长度": ("INT", {"default": 2, "min": 1, "max": 20,
+                          "step": 1,
+                          "tooltip": "DRY:重复序列达到这个长度才开始惩罚。2=默认;调大管得更松。"}),
+                "XTC阈值": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 0.5,
+                         "step": 0.01,
+                         "tooltip": "XTC 采样阈值,配合 XTC概率 使用;0.1 为社区常用值。"}),
+                "XTC概率": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0,
+                        "step": 0.05,
+                        "tooltip": "XTC:按概率剔除最热的候选 token,逼模型换词,写创意提示词好用。0=关闭;0.5 起试。"}),
+                "TopNSigma": ("FLOAT", {"default": -1.0, "min": -1.0, "max": 5.0,
+                           "step": 0.05,
+                           "tooltip": "top_n_sigma 新型截断采样(按标准差截断),与 top_p 二选一。-1=关闭;1.0 起试。"}),
             }
         }
 
@@ -116,7 +140,10 @@ class PSGGUFLoader:
 
     def load(self, 模型, 模型覆盖, 温度, 最大token, top_p, top_k,
              重复惩罚, 随机种子, 上下文长度, GPU层数,
-             min_p=0.0, 频率惩罚=0.0, 存在惩罚=0.0, 思考=False):
+             min_p=0.0, 频率惩罚=0.0, 存在惩罚=0.0, 思考=False,
+             典型采样=1.0, 重复窗口=64, TopNSigma=-1.0,
+             DRY倍率=0.0, DRY基准=1.75, DRY触发长度=2,
+             XTC阈值=0.1, XTC概率=0.0):
         override = (模型覆盖 or "").strip()
         model = override or (模型 or "").strip()
         if not model or model.startswith("("):
@@ -145,6 +172,14 @@ class PSGGUFLoader:
             "min_p": float(min_p),
             "frequency_penalty": float(频率惩罚),
             "presence_penalty": float(存在惩罚),
+            "typical_p": float(典型采样),
+            "penalty_last_n": int(重复窗口),
+            "top_n_sigma": float(TopNSigma),
+            "dry_multiplier": float(DRY倍率),
+            "dry_base": float(DRY基准),
+            "dry_allowed_length": int(DRY触发长度),
+            "xtc_threshold": float(XTC阈值),
+            "xtc_probability": float(XTC概率),
             "disable_thinking": not bool(思考),   # 思考开=不禁用;思考关=后台锁定剥离
             "seed": int(随机种子),
             "n_ctx": int(上下文长度),

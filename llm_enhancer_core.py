@@ -687,7 +687,10 @@ def chat_gguf(gguf_path, temperature, max_tokens, messages,
               top_p=1.0, top_k=0, repeat_penalty=1.0, seed=0,
               n_ctx=8192, n_gpu_layers=-1,
               min_p=0.0, frequency_penalty=0.0, presence_penalty=0.0,
-              disable_thinking=True):
+              disable_thinking=True,
+              typical_p=1.0, penalty_last_n=64, top_n_sigma=-1.0,
+              dry_multiplier=0.0, dry_base=1.75, dry_allowed_length=2,
+              xtc_threshold=0.1, xtc_probability=0.0):
     """用 llama-cpp-python 在 ComfyUI 进程内直接跑 GGUF 模型。
 
     缓存键 = (路径, n_ctx, n_gpu_layers):同模型同参数连续执行不重复加载;
@@ -748,6 +751,14 @@ def chat_gguf(gguf_path, temperature, max_tokens, messages,
         "min_p": float(min_p),
         "frequency_penalty": float(frequency_penalty),
         "presence_penalty": float(presence_penalty),
+        "typical_p": float(typical_p),
+        "penalty_last_n": int(penalty_last_n),
+        "top_n_sigma": float(top_n_sigma),
+        "dry_multiplier": float(dry_multiplier),
+        "dry_base": float(dry_base),
+        "dry_allowed_length": int(dry_allowed_length),
+        "xtc_threshold": float(xtc_threshold),
+        "xtc_probability": float(xtc_probability),
     }
     if disable_thinking and getattr(llm, "_ps_has_ctk", False):
         # 仅当版本原生支持时才注入(不支持的走路径 B 手动渲染)
@@ -855,6 +866,14 @@ def run_enhance(handle, text, mode_display, subdir, system_preset,
     min_p = s.get("min_p", 0.0)
     frequency_penalty = s.get("frequency_penalty", 0.0)
     presence_penalty = s.get("presence_penalty", 0.0)
+    typical_p = s.get("typical_p", 1.0)
+    penalty_last_n = s.get("penalty_last_n", 64)
+    top_n_sigma = s.get("top_n_sigma", -1.0)
+    dry_multiplier = s.get("dry_multiplier", 0.0)
+    dry_base = s.get("dry_base", 1.75)
+    dry_allowed_length = s.get("dry_allowed_length", 2)
+    xtc_threshold = s.get("xtc_threshold", 0.1)
+    xtc_probability = s.get("xtc_probability", 0.0)
     disable_thinking = s.get("disable_thinking", True)
     seed = s.get("seed", 0)
     n_ctx = s.get("n_ctx", 8192)
@@ -898,7 +917,12 @@ def run_enhance(handle, text, mode_display, subdir, system_preset,
             seed=seed, n_ctx=n_ctx, n_gpu_layers=n_gpu_layers,
             min_p=min_p, frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
-            disable_thinking=disable_thinking)
+            disable_thinking=disable_thinking,
+            typical_p=typical_p, penalty_last_n=penalty_last_n,
+            top_n_sigma=top_n_sigma,
+            dry_multiplier=dry_multiplier, dry_base=dry_base,
+            dry_allowed_length=dry_allowed_length,
+            xtc_threshold=xtc_threshold, xtc_probability=xtc_probability)
     else:
         content, usage, api_latency = chat_completion(
             base_url, api_key, model, temperature, max_tokens, messages,
