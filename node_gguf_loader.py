@@ -95,6 +95,17 @@ class PSGGUFLoader:
                 "GPU层数": ("INT", {"default": -1, "min": -1, "max": 999,
                                      "step": 1,
                                      "tooltip": "对应 n_gpu_layers:-1=全部层上 GPU(推荐);0=纯 CPU(显存不够时保命)。改动后首次执行会重载模型。"}),
+                "min_p": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0,
+                                     "step": 0.01,
+                                     "tooltip": "概率下限过滤(比 top_p 更适合高温创作)。0=关闭;Qwen3/3.5 官方推荐 0.0~0.1, temples 建议 0.05 起调。"}),
+                "频率惩罚": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0,
+                                        "step": 0.01,
+                                        "tooltip": "按出现次数惩罚重复词。0=关闭;输出车轱辘话时试 0.3~0.6。"}),
+                "存在惩罚": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0,
+                                        "step": 0.01,
+                                        "tooltip": "只要出现过就惩罚。0=关闭;与频率惩罚二选一微调,别同时开大。"}),
+                "思考": ("BOOLEAN", {"default": False,
+                              "tooltip": "开=保留模型思考过程(含 <think> 标记原样输出,排查用);关=请求级关闭思考(Qwen3/3.5 等推理模型)并自动剔除思维链,只留干净正文 —— 扩写任务保持关。"}),
             }
         }
 
@@ -104,7 +115,8 @@ class PSGGUFLoader:
     CATEGORY = "PromptScale/LLM增强"
 
     def load(self, 模型, 模型覆盖, 温度, 最大token, top_p, top_k,
-             重复惩罚, 随机种子, 上下文长度, GPU层数):
+             重复惩罚, 随机种子, 上下文长度, GPU层数,
+             min_p=0.0, 频率惩罚=0.0, 存在惩罚=0.0, 思考=False):
         override = (模型覆盖 or "").strip()
         model = override or (模型 or "").strip()
         if not model or model.startswith("("):
@@ -130,6 +142,10 @@ class PSGGUFLoader:
             "top_p": float(top_p),
             "top_k": int(top_k),
             "repeat_penalty": float(重复惩罚),
+            "min_p": float(min_p),
+            "frequency_penalty": float(频率惩罚),
+            "presence_penalty": float(存在惩罚),
+            "disable_thinking": not bool(思考),   # 思考开=不禁用;思考关=后台锁定剥离
             "seed": int(随机种子),
             "n_ctx": int(上下文长度),
             "n_gpu_layers": int(GPU层数),

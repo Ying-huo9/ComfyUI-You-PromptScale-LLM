@@ -68,6 +68,14 @@ class PSAPILoader:
                 "代理": (PROXY_CHOICES,
                           {"default": "直连",
                            "tooltip": "本地服务/国内 API 选「直连」;访问 OpenAI 等需代理的服务选「走系统代理」。"}),
+                "频率惩罚": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0,
+                                        "step": 0.01,
+                                        "tooltip": "OpenAI 标准参数:按出现次数惩罚重复。0=关闭;输出车轱辘话时试 0.3~0.6。服务端不支持时会被忽略。"}),
+                "存在惩罚": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0,
+                                        "step": 0.01,
+                                        "tooltip": "OpenAI 标准参数:出现过就惩罚。0=关闭;与频率惩罚二选一微调。服务端不支持时会被忽略。"}),
+                "思考": ("BOOLEAN", {"default": False,
+                              "tooltip": "开=保留模型思考过程(含 <think> 标记原样输出,排查用);关=Ollama 本地模型发 think:false、云端推理模型返回自动剥离思维链,只留干净正文 —— 扩写任务保持关。"}),
             }
         }
 
@@ -77,7 +85,8 @@ class PSAPILoader:
     CATEGORY = "PromptScale/LLM增强"
 
     def load(self, 服务来源, 连接地址, API密钥, 模型, 模型覆盖,
-             温度, 最大token, top_p, 随机种子, 超时秒, 代理):
+             温度, 最大token, top_p, 随机种子, 超时秒, 代理,
+             频率惩罚=0.0, 存在惩罚=0.0, 思考=False):
         override = (模型覆盖 or "").strip()
         model = override or (模型 or "").strip()
 
@@ -101,6 +110,9 @@ class PSAPILoader:
             "top_p": float(top_p),
             "top_k": 0,
             "repeat_penalty": 1.0,
+            "frequency_penalty": float(频率惩罚),
+            "presence_penalty": float(存在惩罚),
+            "disable_thinking": not bool(思考),   # 思考开=不禁用;思考关=后台锁定剥离
             "seed": int(随机种子),
         }
         return (PSModelHandle(settings),)

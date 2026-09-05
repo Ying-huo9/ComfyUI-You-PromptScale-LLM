@@ -428,9 +428,34 @@ def preset_info(preset_path, source):
 # LLM 调用
 # ---------------------------------------------------------------------------
 
+def strip_think(text):
+    """剥离思考模型的思维链输出(comfyUI-llama-TE 同款清洗规则):
+    - 成对 <think>...</think>(含属性变体)整块删除;
+    - 只有 </think> 结尾的(思考被 max_tokens 截断后仍关闭了)把开头整段删掉;
+    - 残留的裸 <think>/</think> 标记一并清掉。
+    适用于 Qwen3/3.5、DeepSeek-R1、GLM-Thou、nemotron 等一切 thinking 模型。
+    """
+    import re
+    if not isinstance(text, str) or not text:
+        return text or ""
+    cleaned = re.sub(r"<think\b[^>]*>.*?</think>", "", text,
+                     flags=re.DOTALL | re.IGNORECASE)
+    if re.search(r"</think>", cleaned, flags=re.IGNORECASE):
+        cleaned = re.sub(r"^.*?</think>\s*", "", cleaned, count=1,
+                         flags=re.DOTALL | re.IGNORECASE)
+    # 开头就是 <think> 且全文没有闭合 → 思考被 max_tokens 截断,整段视为思维链
+    if re.match(r"^\s*<think\b", cleaned, flags=re.IGNORECASE) \
+            and not re.search(r"</think>", cleaned, flags=re.IGNORECASE):
+        return ""
+    cleaned = cleaned.replace("<think>", "").replace("</think>", "")
+    return cleaned.strip()
+
+
 def _ollama_native_chat(base_url, api_key, model, temperature, max_tokens,
                         messages, timeout, use_system_proxy,
-                        top_p=1.0, seed=0):
+                        top_p=1.0, seed=0,
+                        frequency_penalty=0.0, presence_penalty=0.0,
+                        disable_thinking=True):
     """Ollama 原生 /api/chat(base_url 不带 /v1 时的智能路由)。
 
     请求/响应结构与 OpenAI 兼容端点不同,此处做双向转换:
@@ -443,6 +468,10 @@ def _ollama_native_chat(base_url, api_key, model, temperature, max_tokens,
     }
     if top_p is not None and float(top_p) != 1.0:
         options["top_p"] = float(top_p)
+    if float(frequency_penalty or 0.0) != 0.0:
+        options["frequency_penalty"] = float(frequency_penalty)
+    if float(presence_penalty or 0.0) != 0.0:
+        options["presence_penalty"] = float(presence_penalty)
     if seed and int(seed) != 0:
         options["seed"] = int(seed)
     payload = {
@@ -452,6 +481,8 @@ def _ollama_native_chat(base_url, api_key, model, temperature, max_tokens,
         "options": options,
         "keep_alive": 0,   # 用完即卸载,不常驻显存(prompt_assistant 同款)
     }
+    if disable_thinking:
+        payload["think"] = False   # Ollama 0.9+ 思考模型开关;老版本/非思考模型可能报错,下面兜底重试
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -471,7 +502,29 @@ def _ollama_native_chat(base_url, api_key, model, temperature, max_tokens,
             detail = e.read().decode("utf-8", "replace")[:400]
         except Exception:
             pass
-        raise RuntimeError(f"HTTP {e.code} — {detail}")
+        # 老版 Ollama / 非思考模型不认识 think 字段 → 去掉重试一次
+        if disable_thinking and "think" in payload and e.code in (400, 500):
+            payload.pop("think", None)
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(url, data=data, method="POST")
+            req.add_header("Content-Type", "application/json")
+            req.add_header("Accept", "application/json")
+            try:
+                with opener.open(req, timeout=float(timeout)) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e2:
+                detail2 = ""
+                try:
+                    detail2 = e2.read().decode("utf-8", "replace")[:400]
+                except Exception:
+                    pass
+                raise RuntimeError(f"HTTP {e2.code} — {detail2}")
+            except urllib.error.URLError as e2:
+                raise RuntimeError(
+                    f"无法连接 {base_url}({getattr(e2, 'reason', e2)})。"
+                    f"请确认 Ollama 已运行 `ollama serve` 并已 `ollama pull {model}`。")
+        else:
+            raise RuntimeError(f"HTTP {e.code} — {detail}")
     except urllib.error.URLError as e:
         reason = getattr(e, "reason", e)
         raise RuntimeError(
@@ -482,6 +535,8 @@ def _ollama_native_chat(base_url, api_key, model, temperature, max_tokens,
         content = body["message"]["content"]
     except (KeyError, TypeError):
         raise RuntimeError(f"Ollama 原生返回格式异常: {str(body)[:300]}")
+    if disable_thinking:
+        content = strip_think(content or "")
     usage = {
         "prompt_eval_count": body.get("prompt_eval_count"),
         "eval_count": body.get("eval_count"),
@@ -491,19 +546,27 @@ def _ollama_native_chat(base_url, api_key, model, temperature, max_tokens,
 
 def chat_completion(base_url, api_key, model, temperature, max_tokens,
                     messages, timeout, use_system_proxy=False,
-                    top_p=1.0, seed=0):
+                    top_p=1.0, seed=0,
+                    frequency_penalty=0.0, presence_penalty=0.0,
+                    disable_thinking=True):
     """OpenAI 兼容 chat/completions 请求(标准库实现)。
 
     智能路由(base_url 不带 /v1 且指向 Ollama → 原生 /api/chat);
     默认绕过系统代理(本地服务/国内直连 API 都更稳);需要代理才能访问的
     服务(如 OpenAI)传 use_system_proxy=True 走系统代理。
-    top_p / seed 为 OpenAI 标准字段;seed=0 表示不指定(随机)。
+    top_p / seed / frequency_penalty / presence_penalty 为 OpenAI 标准字段;
+    seed=0 表示不指定(随机);惩罚类 0 表示不启用。
+    disable_thinking=True 时:Ollama 原生路由发 think:false,
+    并对所有返回统一剥离 <think> 思维链(thinking 模型输出混链兜底)。
     """
     base = clean_base_url(base_url)
     if is_ollama_native(base):
         return _ollama_native_chat(base, api_key, model, temperature,
                                    max_tokens, messages, timeout,
-                                   use_system_proxy, top_p=top_p, seed=seed)
+                                   use_system_proxy, top_p=top_p, seed=seed,
+                                   frequency_penalty=frequency_penalty,
+                                   presence_penalty=presence_penalty,
+                                   disable_thinking=disable_thinking)
 
     url = base + "/chat/completions"
     payload = {
@@ -515,6 +578,10 @@ def chat_completion(base_url, api_key, model, temperature, max_tokens,
     }
     if top_p is not None and float(top_p) != 1.0:
         payload["top_p"] = float(top_p)
+    if float(frequency_penalty or 0.0) != 0.0:
+        payload["frequency_penalty"] = float(frequency_penalty)
+    if float(presence_penalty or 0.0) != 0.0:
+        payload["presence_penalty"] = float(presence_penalty)
     if seed and int(seed) != 0:
         payload["seed"] = int(seed)
     data = json.dumps(payload).encode("utf-8")
@@ -553,12 +620,17 @@ def chat_completion(base_url, api_key, model, temperature, max_tokens,
     latency = time.time() - t0
 
     try:
-        content = body["choices"][0]["message"]["content"]
+        message = body["choices"][0]["message"]
+        content = message.get("content")
         usage = body.get("usage", {})
     except (KeyError, IndexError, TypeError):
         raise RuntimeError(
             f"返回格式异常(非 OpenAI 兼容结构): {str(body)[:300]}"
         )
+    if disable_thinking:
+        # 兜底剥离:部分服务(尤其本地 vLLM/LM Studio 跑 thinking GGUF)
+        # 会把 <think> 思维链直接混进 content,而不是放到 reasoning_content
+        content = strip_think(content or "")
     return (content or "").strip(), usage, latency
 
 
@@ -574,15 +646,22 @@ _GGUF_CACHE = {"key": None, "llm": None}
 
 def chat_gguf(gguf_path, temperature, max_tokens, messages,
               top_p=1.0, top_k=0, repeat_penalty=1.0, seed=0,
-              n_ctx=8192, n_gpu_layers=-1):
+              n_ctx=8192, n_gpu_layers=-1,
+              min_p=0.0, frequency_penalty=0.0, presence_penalty=0.0,
+              disable_thinking=True):
     """用 llama-cpp-python 在 ComfyUI 进程内直接跑 GGUF 模型。
 
     缓存键 = (路径, n_ctx, n_gpu_layers):同模型同参数连续执行不重复加载;
     换模型或改加载参数自动释放旧实例归还显存/内存。
-    采样参数:top_k<=0 关闭 top_k 过滤;repeat_penalty=1.0 即不惩罚;
-    seed=0 表示不指定(每次随机)。
+    采样参数全量对齐 llama.cpp:top_p / top_k(0=显式关闭)/ min_p / repeat_penalty
+    / frequency_penalty / presence_penalty;seed=0 表示不指定(每次随机)。
+    disable_thinking=True:
+      - 通过 chat_template_kwargs(enable_thinking=False)请求关闭思考
+        (参数按 llama-cpp-python 版本兼容过滤,老版本自动跳过,TypeError 自动去参重试);
+      - 输出统一剥离 <think>...</think> 思维链(截断兜底)。
     返回 (content, usage, latency),与 chat_completion 同构。
     """
+    import inspect
     try:
         from llama_cpp import Llama
     except ImportError as e:
@@ -615,23 +694,62 @@ def chat_gguf(gguf_path, temperature, max_tokens, messages,
         _GGUF_CACHE["key"] = cache_key
         _GGUF_CACHE["llm"] = llm
 
+    # 按当前 llama-cpp-python 版本过滤参数(comfyUI-llama-TE 同款兼容策略):
+    # presence_penalty / present_penalty 新旧版本名不同,自动换名;
+    # 版本不支持的键(如 min_p / chat_template_kwargs)直接丢弃,不报错。
     params = {
         "messages": messages,
         "temperature": float(temperature),
         "max_tokens": int(max_tokens),
+        "top_p": float(top_p),
+        "top_k": int(top_k),
+        "repeat_penalty": float(repeat_penalty),
+        "min_p": float(min_p),
+        "frequency_penalty": float(frequency_penalty),
+        "presence_penalty": float(presence_penalty),
     }
-    if top_p is not None and float(top_p) != 1.0:
-        params["top_p"] = float(top_p)
-    if int(top_k or 0) > 0:
-        params["top_k"] = int(top_k)
-    if float(repeat_penalty or 1.0) != 1.0:
-        params["repeat_penalty"] = float(repeat_penalty)
+    if disable_thinking:
+        params["chat_template_kwargs"] = {"enable_thinking": False}
     if int(seed or 0) != 0:
         params["seed"] = int(seed)
+    # 0/中性值不传(0=关闭该过滤器);top_k 例外:必须显式传 0 才是"关闭",
+    # 不传会用 llama-cpp-python 默认的 40
+    keep_zero = ("max_tokens", "temperature", "seed", "top_k")
+    params = {k: v for k, v in params.items()
+              if k in keep_zero
+              or (v is not None and not (isinstance(v, (int, float)) and v == 0))}
+
+    try:
+        sig = inspect.signature(llm.create_chat_completion)
+        allowed = sig.parameters
+        has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD
+                         for p in allowed.values())
+    except (TypeError, ValueError):
+        allowed, has_var_kw = None, True
+
+    if allowed is not None:
+        if "presence_penalty" in params and "presence_penalty" not in allowed \
+                and "present_penalty" in allowed:
+            params["present_penalty"] = params.pop("presence_penalty")
+        if "present_penalty" in params and "present_penalty" not in allowed \
+                and "presence_penalty" in allowed:
+            params["presence_penalty"] = params.pop("present_penalty")
+        if not has_var_kw:
+            params = {k: v for k, v in params.items() if k in allowed}
 
     t0 = time.time()
     try:
         resp = llm.create_chat_completion(**params)
+    except TypeError as e:
+        # 老版本不认 chat_template_kwargs → 去掉重试一次(仅剥离层兜底思考)
+        if "chat_template_kwargs" in params and "chat_template_kwargs" in str(e):
+            params.pop("chat_template_kwargs", None)
+            try:
+                resp = llm.create_chat_completion(**params)
+            except Exception as e2:
+                raise RuntimeError(f"本地 GGUF 推理失败:{e2}") from e2
+        else:
+            raise RuntimeError(f"本地 GGUF 推理失败:{e}") from e
     except Exception as e:
         raise RuntimeError(f"本地 GGUF 推理失败:{e}") from e
     latency = time.time() - t0
@@ -641,6 +759,14 @@ def chat_gguf(gguf_path, temperature, max_tokens, messages,
         usage = resp.get("usage") or {}
     except (KeyError, IndexError, TypeError):
         raise RuntimeError(f"本地 GGUF 返回结构异常:{str(resp)[:300]}")
+    if disable_thinking:
+        content = strip_think(content or "")
+        if not content:
+            raise RuntimeError(
+                "模型只输出了思考过程就被 max_tokens 截断,剥离后没有正文。"
+                "解决办法(任选其一):① 调大「最大token」(思考模型建议 ≥4096);"
+                "② 打开「思考」开关保留思考输出,看看模型卡在哪;"
+                "③ 换非 thinking 版本的模型(如 Qwen3.5 instruct 非 reasoning 量化)。")
     return (content or "").strip(), usage, latency
 
 
@@ -676,6 +802,10 @@ def run_enhance(handle, text, mode_display, subdir, system_preset,
     top_p = s.get("top_p", 1.0)
     top_k = s.get("top_k", 0)
     repeat_penalty = s.get("repeat_penalty", 1.0)
+    min_p = s.get("min_p", 0.0)
+    frequency_penalty = s.get("frequency_penalty", 0.0)
+    presence_penalty = s.get("presence_penalty", 0.0)
+    disable_thinking = s.get("disable_thinking", True)
     seed = s.get("seed", 0)
     n_ctx = s.get("n_ctx", 8192)
     n_gpu_layers = s.get("n_gpu_layers", -1)
@@ -715,12 +845,18 @@ def run_enhance(handle, text, mode_display, subdir, system_preset,
         content, usage, api_latency = chat_gguf(
             gguf_path, temperature, max_tokens, messages,
             top_p=top_p, top_k=top_k, repeat_penalty=repeat_penalty,
-            seed=seed, n_ctx=n_ctx, n_gpu_layers=n_gpu_layers)
+            seed=seed, n_ctx=n_ctx, n_gpu_layers=n_gpu_layers,
+            min_p=min_p, frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+            disable_thinking=disable_thinking)
     else:
         content, usage, api_latency = chat_completion(
             base_url, api_key, model, temperature, max_tokens, messages,
             timeout, use_system_proxy=use_system_proxy,
-            top_p=top_p, seed=seed)
+            top_p=top_p, seed=seed,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+            disable_thinking=disable_thinking)
     if not content:
         raise RuntimeError("模型返回了空内容(可能被 max_tokens 截断或模型拒绝输出)。")
 
@@ -748,6 +884,13 @@ def run_enhance(handle, text, mode_display, subdir, system_preset,
         sampling["top_k"] = int(top_k)
     if float(repeat_penalty or 1.0) != 1.0:
         sampling["repeat_penalty"] = float(repeat_penalty)
+    if float(min_p or 0.0) > 0.0:
+        sampling["min_p"] = float(min_p)
+    if float(frequency_penalty or 0.0) != 0.0:
+        sampling["frequency_penalty"] = float(frequency_penalty)
+    if float(presence_penalty or 0.0) != 0.0:
+        sampling["presence_penalty"] = float(presence_penalty)
+    sampling["thinking"] = "关闭(已剥离)" if disable_thinking else "保留原始输出"
     if int(seed or 0) != 0:
         sampling["seed"] = int(seed)
     info["sampling"] = sampling
