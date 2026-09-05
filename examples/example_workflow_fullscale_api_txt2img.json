@@ -22,7 +22,7 @@
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "【PromptScale 示例工作流 · 在线API】\n① 加载器默认 DeepSeek,在「API密钥」填 Key 后按 R 刷新选模型\n   也可换 Ollama/LM Studio 等本地服务;地址留空用官方/默认端点\n② 工作节点写一行想法 → 换掉 Checkpoint 里的模型文件名,Queue 即可\n③ 温度/top_p/seed 在加载器上;云端审查可能压回 NSFW 档\n④ ⚠ API密钥会存进工作流JSON,分享前删掉\n⑤ 想用本地 GGUF:把本加载器换成「PromptScale 本地GGUF 加载器」,下游连线不动"
+        "【PromptScale 示例工作流 · 在线API】\n① 加载器默认 DeepSeek,在「API密钥」填 Key 后按 R 刷新选模型\n   也可换 Ollama/LM Studio 等本地服务;地址留空用官方/默认端点\n② 扩写器:master 中英文任选;尺度档位对任意 master 生效\n③ ⚠ API密钥会存进工作流JSON,分享前删掉;云端审查可能压回高尺度档\n④ 想用本地 GGUF:把本加载器换成「PromptScale 本地GGUF 加载器」,下游连线不动"
       ]
     },
     {
@@ -69,7 +69,7 @@
     },
     {
       "id": 3,
-      "type": "PSFullScale",
+      "type": "PSEnhancer",
       "pos": [
         640,
         120
@@ -108,15 +108,19 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "PSFullScale"
+        "Node name for S&R": "PSEnhancer"
       },
       "widgets_values": [
-        "a candid photo of a young woman reading by a warm window light",
+        "一房车窗边看书的女孩,温暖午后光线,电影感构图",
         "expand — 想法扩写成完整提示词",
         "Auto (按输入词自动判定)",
-        "English_Master_v2.md",
+        "fullscale/English_Master_v2.md",
+        "",
+        "",
+        "",
         ""
-      ]
+      ],
+      "title": "PromptScale 扩写器"
     },
     {
       "id": 4,

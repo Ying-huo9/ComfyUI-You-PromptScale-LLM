@@ -319,17 +319,42 @@ def list_system_presets(subdir):
     return names
 
 
+def list_all_system_presets():
+    """合并扫描 fullscale/ 与 chinese/ 两个目录,返回带目录前缀的下拉列表。
+
+    选项形如 "fullscale/English_Master_v2.md" / "chinese/Chinese_Master_Refined.md",
+    按修改时间倒序混排(新的在前)。供合并后的单一扩写节点使用。
+    """
+    files = []
+    for subdir in ("fullscale", "chinese"):
+        for p in glob.glob(os.path.join(_preset_dir(subdir), "*.md")):
+            files.append((subdir + "/" + os.path.basename(p),
+                          os.path.getmtime(p)))
+    files.sort(key=lambda x: -x[1])
+    names = [name for name, _ in files]
+    if not names:
+        names = ["fullscale/" + DEFAULT_FULLSCALE]
+    return names
+
+
 def resolve_preset_path(name_or_path, subdir):
     """把预设名解析为真实文件路径。
 
     规则(custom_preset 与下拉值统一走这里):
-      - 纯文件名        → 去对应子目录找(漏 .md 自动补)
+      - "fullscale/xxx" 或 "chinese/xxx" 前缀 → 去对应子目录找(合并下拉用)
+      - 纯文件名        → 先去对应子目录找,找不到再试另一个子目录(漏 .md 自动补)
       - 含 / \\ : 的路径 → 直接当作文件路径读取(支持目录外任意位置)
-    找不到时抛错并列出该子目录的全部可用预设。
+    找不到时抛错并列出全部可用预设。
     """
     raw = (name_or_path or "").strip().strip('"').strip("'")
     if not raw:
         raise RuntimeError("预设名为空。")
+    # 合并下拉的目录前缀形式
+    for _pre in ("fullscale/", "chinese/"):
+        if raw.startswith(_pre):
+            subdir = _pre[:-1]
+            raw = raw[len(_pre):]
+            break
     has_sep = ("/" in raw) or ("\\" in raw) or (":" in raw)
     if has_sep:
         path = os.path.abspath(raw)
@@ -338,6 +363,14 @@ def resolve_preset_path(name_or_path, subdir):
         path = os.path.join(_preset_dir(subdir), cand)
         if not os.path.exists(path):
             path = os.path.join(_preset_dir(subdir), raw)
+        if not os.path.exists(path):
+            # 跨目录兜底:另一边有同名/同名.md 就用它
+            other = "chinese" if subdir == "fullscale" else "fullscale"
+            for c in (cand, raw):
+                p2 = os.path.join(_preset_dir(other), c)
+                if os.path.exists(p2):
+                    path = p2
+                    break
     if not os.path.exists(path) or not os.path.isfile(path):
         avail = "\n  ".join(list_system_presets(subdir)) or "(空)"
         raise RuntimeError(
@@ -617,14 +650,14 @@ def chat_gguf(gguf_path, temperature, max_tokens, messages,
 
 def run_enhance(handle, text, mode_display, subdir, system_preset,
                 mode_instructions, node_label, tier_key=None,
-                tier_override=None, custom_preset=""):
-    """两个工作节点的公共执行路径(模型/参数全部来自加载器句柄)。
+                tier_texts=None, custom_preset=""):
+    """工作节点的公共执行路径(模型/参数全部来自加载器句柄)。
 
-    handle: PSModelHandle,由「PromptScale LLM 模型加载器」输出。
-    system_preset: 下拉选择的文件名(节点类原样传入)。
-    tier_key: 'SFW'|'Suggestive'|'NSFW'|'Auto'(仅全尺度节点传;Auto 或
-              None 都不追加覆盖段)。
-    tier_override: dict,如 TIER_OVERRIDE_EN。
+    handle: PSModelHandle,由加载器节点输出。
+    system_preset: 下拉选择的文件名(可带 fullscale/ 或 chinese/ 前缀)。
+    tier_key: 'SFW'|'Suggestive'|'NSFW'|'Auto';Auto 或 None 都不追加覆盖段。
+    tier_texts: {'SFW':..,'Suggestive':..,'NSFW':..} 节点面板上的自定义档位
+                指令;某档为空时回退内置 TIER_OVERRIDE_EN。
     """
     if handle is None or not getattr(handle, "settings", None):
         raise RuntimeError(
@@ -666,8 +699,11 @@ def run_enhance(handle, text, mode_display, subdir, system_preset,
     master_body, master_path = loaded["body"], loaded["path"]
 
     system_parts = [master_body, mode_instructions[mode_key]]
-    if tier_key and tier_key != "Auto" and tier_override:
-        system_parts.append(tier_override[tier_key])
+    if tier_key and tier_key != "Auto":
+        tier_text = ((tier_texts or {}).get(tier_key) or "").strip() \
+            or TIER_OVERRIDE_EN.get(tier_key, "")
+        if tier_text:
+            system_parts.append(tier_text)
     system = "\n\n".join(system_parts)
 
     messages = [

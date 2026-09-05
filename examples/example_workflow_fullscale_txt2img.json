@@ -22,7 +22,7 @@
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "【PromptScale 示例工作流 · 本地GGUF】\n① 加载器直接读 models/LLM 里的 .gguf 模型,不用起任何服务\n   放了新模型按 R 刷新;下拉过期可在「模型覆盖」手填文件名\n② 工作节点写一行想法 → 换掉 Checkpoint 里的模型文件名,Queue 即可\n③ 首次执行会加载模型到 GPU(4B 约 3 秒);换模型自动释放上一个\n④ 想调输出风格:温度/top_p/top_k/重复惩罚都在加载器上;seed 非 0 可复现\n⑤ 想用云端 API:把本加载器换成「PromptScale API 加载器」,下游连线不动"
+        "【PromptScale 示例工作流 · 本地GGUF】\n① 加载器直接读 models/LLM 里的 .gguf 模型,不用起任何服务\n   放了新模型按 R 刷新;下拉过期可在「模型覆盖」手填文件名\n② 扩写器:master预设 中英文任选(输出语言随 master);\n   尺度档位对任意 master 生效,指令可在右键菜单「编辑档位指令」自定义\n③ 首次执行会加载模型到 GPU(4B 约 3 秒);换模型自动释放上一个\n④ 想调输出风格:温度/top_p/top_k/重复惩罚/seed 都在加载器上\n⑤ 想用云端 API:把本加载器换成「PromptScale API 加载器」,下游连线不动"
       ]
     },
     {
@@ -68,7 +68,7 @@
     },
     {
       "id": 3,
-      "type": "PSFullScale",
+      "type": "PSEnhancer",
       "pos": [
         640,
         120
@@ -107,15 +107,19 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "PSFullScale"
+        "Node name for S&R": "PSEnhancer"
       },
       "widgets_values": [
-        "a candid photo of a young woman reading by a warm window light",
+        "一房车窗边看书的女孩,温暖午后光线,电影感构图",
         "expand — 想法扩写成完整提示词",
         "Auto (按输入词自动判定)",
-        "English_Master_v2.md",
+        "fullscale/English_Master_v2.md",
+        "",
+        "",
+        "",
         ""
-      ]
+      ],
+      "title": "PromptScale 扩写器"
     },
     {
       "id": 4,

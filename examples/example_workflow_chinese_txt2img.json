@@ -22,7 +22,7 @@
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "【PromptScale 示例工作流 · 中文扩写 · 本地GGUF】\n① 加载器直接读 models/LLM 里的 .gguf,不用起任何服务\n② 中文节点无档位开关,尺度由输入词决定;需接支持中文的底模(如 Qwen 系列)\n③ 参数说明同全尺度本地版;建议温度 0.7~0.8\n④ 想用云端 API:换「PromptScale API 加载器」,下游连线不动"
+        "【PromptScale 示例工作流 · 中文输出 · 本地GGUF】\n① 扩写器选了 chinese/ 目录的中文 master → 输出中文提示词;\n   想出英文提示词只需把 master预设 切回 fullscale/ 目录,节点不用换\n② 尺度档位 Auto=由 master 按输入词自判(默认保守);\n   硬档位对中文 master 同样生效,指令可在右键菜单自定义\n③ 需接支持中文的底模(如 Qwen 系列);建议温度 0.7~0.8\n④ 加载器直接读 models/LLM 里的 .gguf,不用起任何服务"
       ]
     },
     {
@@ -68,7 +68,7 @@
     },
     {
       "id": 3,
-      "type": "PSChinese",
+      "type": "PSEnhancer",
       "pos": [
         640,
         480
@@ -107,14 +107,19 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "PSChinese"
+        "Node name for S&R": "PSEnhancer"
       },
       "widgets_values": [
-        "窗边看书的女孩，午后阳光，温暖氛围",
+        "窗边看书的女孩,午后阳光,温暖氛围",
         "expand — 想法扩写成完整提示词",
-        "Chinese_Master_Refined.md",
+        "Auto (按输入词自动判定)",
+        "chinese/Chinese_Master_Refined.md",
+        "",
+        "",
+        "",
         ""
-      ]
+      ],
+      "title": "PromptScale 扩写器"
     },
     {
       "id": 4,
