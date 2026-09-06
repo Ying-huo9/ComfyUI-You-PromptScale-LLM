@@ -18,6 +18,8 @@ import os
 import json
 import time
 import glob
+import re
+import inspect
 import urllib.request
 import urllib.error
 
@@ -644,16 +646,17 @@ GGUF_SERVICE = "本地 GGUF (llama.cpp)"
 _GGUF_CACHE = {"key": None, "llm": None}
 
 
-def _gguf_render_prompt(llm, messages):
+def _gguf_render_prompt(llm, messages, enable_thinking=False):
     """用模型自带的 jinja 聊天模板手动渲染提示词(绕过 llama-cpp-python 的
-    chat formatter),显式传入 enable_thinking=False 实现请求级关思考。"""
+    chat formatter),显式传入 enable_thinking 控制思考块:
+    False=空思考块(请求级关思考);True=开放思考(推理进 <think> 标签,可剥离)。"""
     import jinja2
     tmpl_src = llm.metadata.get("tokenizer.chat_template")
     if not tmpl_src:
         raise RuntimeError("模型文件不含聊天模板,无法请求级关闭思考")
     ctx = {k: v for k, v in llm.metadata.items() if isinstance(v, str)}
     ctx.update({"messages": messages, "add_generation_prompt": True,
-                "enable_thinking": False})
+                "enable_thinking": bool(enable_thinking)})
     return jinja2.Template(tmpl_src).render(**ctx)
 
 
@@ -681,6 +684,46 @@ def _gguf_no_think_completion(llm, params):
     except (KeyError, IndexError, TypeError):
         raise RuntimeError(f"本地 GGUF 返回结构异常:{str(resp)[:300]}")
     return content, usage
+
+
+def _gguf_tagged_completion(llm, params):
+    """带思考生成路径:模板按默认(enable_thinking=True)渲染,模型把推理
+    写进 <think>...</think> 标签内,正文干净 —— 供「标签形态可靠剥离」的
+    微调模型(无视空思考块者)使用。返回 (content, usage)。"""
+    messages = params.pop("messages")
+    prompt = _gguf_render_prompt(llm, messages, enable_thinking=True)
+    tokens = llm.tokenize(prompt.encode("utf-8"), special=True)
+    cparams = {k: v for k, v in params.items() if k != "messages"}
+    try:
+        allowed = set(inspect.signature(llm.create_completion).parameters)
+        for old, new in (("present_penalty", "presence_penalty"),
+                         ("presence_penalty", "present_penalty")):
+            if old in cparams and old not in allowed and new in allowed:
+                cparams[new] = cparams.pop(old)
+        cparams = {k: v for k, v in cparams.items() if k in allowed}
+    except (TypeError, ValueError):
+        pass
+    resp = llm.create_completion(prompt=tokens, **cparams)
+    try:
+        content = resp["choices"][0]["text"]
+        usage = resp.get("usage") or {}
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError(f"本地 GGUF 返回结构异常:{str(resp)[:300]}")
+    return content, usage
+
+
+# 「推理写进正文」检测:部分微调模型(如 HauhauCS 系列)即使模板给了空
+# <think></think> 块,仍会把 "Thinking Process:/思考过程:" 式推理当正文输出,
+# 且不带任何 <think> 标签 —— 标签剥离拦不住,只能识别后换带思考+剥离策略
+_PLAIN_THINK_RE = re.compile(
+    r"^\s*(thinking process|思考过程\s*[:：]|let me (analyze|think|work|break)|"
+    r"okay,?\s*(let me|i need|first)|(\*\*)?analys(e|ing) the (request|input|prompt)|"
+    r"1\.\s*\*\*|首先[，,]?\s*(我|让))",
+    re.IGNORECASE)
+
+
+def _looks_like_plain_think(text):
+    return bool(_PLAIN_THINK_RE.match((text or "").lstrip()))
 
 
 def chat_gguf(gguf_path, temperature, max_tokens, messages,
@@ -786,10 +829,18 @@ def chat_gguf(gguf_path, temperature, max_tokens, messages,
 
     t0 = time.time()
     content = usage = None
+    tagged_mode = False
 
-    # 路径 B(优先探测): 当前版本不支持 chat_template_kwargs → 手动渲染模板,
-    # 模型真正不生成思维链(比回退方案快数倍,token 也省)
-    if disable_thinking and not has_ctk:
+    # 已识别的"推理写进正文"模型:直接走带思考生成(标签形态)+剥离,一次到位
+    if disable_thinking and getattr(llm, "_ps_plain_thinker", False):
+        tagged_mode = True
+        try:
+            content, usage = _gguf_tagged_completion(llm, dict(params))
+        except Exception as e:
+            raise RuntimeError(f"本地 GGUF 推理失败:{e}") from e
+
+    # 路径 B: 不支持 chat_template_kwargs → 手动渲染空思考块(标准关思考)
+    if content is None and disable_thinking and not has_ctk:
         try:
             content, usage = _gguf_no_think_completion(llm, dict(params))
         except Exception:
@@ -811,23 +862,46 @@ def chat_gguf(gguf_path, temperature, max_tokens, messages,
                 raise RuntimeError(f"本地 GGUF 推理失败:{e}") from e
         except Exception as e:
             raise RuntimeError(f"本地 GGUF 推理失败:{e}") from e
-        latency = time.time() - t0
         try:
             content = resp["choices"][0]["message"]["content"]
             usage = resp.get("usage") or {}
         except (KeyError, IndexError, TypeError):
             raise RuntimeError(f"本地 GGUF 返回结构异常:{str(resp)[:300]}")
-    else:
-        latency = time.time() - t0
+
+    # 「推理写进正文」检测:空思考块被无视(HauhauCS 等微调模型)→ 记住该模型,
+    # 改用带思考生成(标签形态)重试一次,标签可被 strip_think 可靠剥离
+    if disable_thinking and not tagged_mode and _looks_like_plain_think(content):
+        llm._ps_plain_thinker = True
+        print("[PromptScale] 该模型无视空思考块(推理写进正文),"
+              "自动改用「带思考生成+剥离」重试…")
+        try:
+            content2, usage2 = _gguf_tagged_completion(llm, dict(params))
+        except Exception as e:
+            raise RuntimeError(f"本地 GGUF 推理失败:{e}") from e
+        if _looks_like_plain_think(strip_think(content2 or "")):
+            raise RuntimeError(
+                "该模型在带思考模式下仍把推理写进正文且无法剥离。"
+                "建议:① 调大「上下文长度」(≥12288,大 master 占用大量 token);"
+                "② 调大「最大token」;③ 换官方量化/Qwen3.5 instruct 版模型。")
+        content, usage = content2, usage2
+        tagged_mode = True
+
+    latency = time.time() - t0
 
     if disable_thinking:
         content = strip_think(content or "")
         if not content:
             raise RuntimeError(
-                "模型只输出了思考过程就被 max_tokens 截断,剥离后没有正文。"
-                "解决办法(任选其一):① 调大「最大token」(思考模型建议 ≥4096);"
-                "② 打开「思考」开关保留思考输出,看看模型卡在哪;"
-                "③ 换非 thinking 版本的模型(如 Qwen3.5 instruct 非 reasoning 量化)。")
+                "模型只输出了思考过程就被截断,剥离后没有正文。"
+                "注意:大 master 本身就占 ~4700 token,「上下文长度」8192 时"
+                "仅剩 ~3500 给生成。解决办法(任选其一):"
+                "① 调大「上下文长度」到 ≥12288;② 调大「最大token」;"
+                "③ 换非 thinking 版本的模型。")
+        if tagged_mode and _looks_like_plain_think(content):
+            raise RuntimeError(
+                "带思考模式下该模型仍把推理写进正文且无法剥离。"
+                "建议:① 调大「上下文长度」(≥12288,大 master 占用大量 token);"
+                "② 换官方量化/Qwen3.5 instruct 版模型。")
     return (content or "").strip(), usage, latency
 
 
