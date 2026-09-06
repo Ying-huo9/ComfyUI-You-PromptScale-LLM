@@ -910,6 +910,15 @@ def run_enhance(handle, text, mode_display, subdir, system_preset,
         {"role": "user", "content": text},
     ]
 
+    # 控制台一行状态:思考开关当前是否生效(排障用,肉眼可见)
+    short_model = (model or "").replace("\\", "/").rsplit("/", 1)[-1]
+    print("[PromptScale] 思考=%s | 档位=%s | master=%s | 模型=%s"
+          % ("开(保留思考原文,输出会含思维链)" if not disable_thinking
+             else "关(请求级禁用+输出剥离)",
+             tier_key or "Auto",
+             (preset_ref or "").rsplit("/", 1)[-1],
+             short_model))
+
     if gguf_path:
         content, usage, api_latency = chat_gguf(
             gguf_path, temperature, max_tokens, messages,
