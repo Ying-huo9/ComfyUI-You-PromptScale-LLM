@@ -35,10 +35,12 @@ CHINESE_DIR = os.path.join(PROMPTS_DIR, "chinese")       # 中文 master
 MODE_CHOICES = [
     "expand — 想法扩写成完整提示词",
     "upgrade — 旧提示词升级改写",
+    "refine — 保真润色(不压缩不减细节)",
 ]
 MODE_KEY = {
     "expand — 想法扩写成完整提示词": "expand",
     "upgrade — 旧提示词升级改写": "upgrade",
+    "refine — 保真润色(不压缩不减细节)": "refine",
 }
 
 # 仅全尺度节点使用(中文 master 自带尺度,无档位 UI)
@@ -98,6 +100,16 @@ MODE_INSTRUCTION_EN = {
         "Do not just lightly edit — deliver a complete, better replacement. "
         "Output the prompt only."
     ),
+    "refine": (
+        "The user message below is an ALREADY-COMPLETE prompt. Polish it "
+        "with strict fidelity: keep every concrete entity, pose, garment, "
+        "accessory, tattoo, lighting and camera detail EXACTLY as written — "
+        "do not remove, merge, replace or add any of them. Do NOT compress: "
+        "output length must be equal to or slightly longer than the input, "
+        "and any target length range stated in the framework above is "
+        "SUSPENDED for this mode. Only fix grammar, wording, repetition, "
+        "flow and consistency. Output the prompt only."
+    ),
 }
 
 # 中文节点的模式指令
@@ -112,7 +124,29 @@ MODE_INSTRUCTION_ZH = {
         "(句子节奏、光线前置、氛围收尾)。不要小修小补,要交付完整且更好的"
         "替代版本。只输出提示词本身。"
     ),
+    "refine": (
+        "下面的用户消息是一段已经写好的完整提示词。请做保真润色:逐条保留"
+        "输入中的全部具体细节(主体、姿态、服装、配饰、纹身、灯光、镜头等),"
+        "不得删除、合并、替换或新增任何内容;禁止压缩,输出长度须与输入相当"
+        "或略长,上面框架给出的任何目标长度区间对本模式不生效。只修正语法、"
+        "用词、重复、衔接与一致性。只输出提示词本身。"
+    ),
 }
+
+# 字数限制覆盖指令(节点开关打开时追加在 system prompt 最末,优先级最高)
+LENGTH_OVERRIDE_EN = (
+    "[LENGTH OVERRIDE — UI switch, highest priority]\n"
+    "Ignore any target length or character range stated anywhere above "
+    "(including any faithfulness length rule). The output MUST be "
+    "approximately {n} characters (±10%). Do not stop early and do not pad; "
+    "finish naturally near this size."
+)
+LENGTH_OVERRIDE_ZH = (
+    "[长度覆盖 — UI开关,最高优先级]\n"
+    "忽略上文任何位置给出的目标长度或字符区间(包括保真润色的长度锁定)。"
+    "输出必须约 {n} 字(±10%)。不要提前收尾,也不要注水凑字,在接近该长度处"
+    "自然收束。"
+)
 
 # 目录为空时下拉里的兜底名(执行时会报错并列出实际可用文件)
 DEFAULT_FULLSCALE = "English_Master_v2.md"
@@ -322,16 +356,21 @@ def list_system_presets(subdir):
 
 
 def list_all_system_presets():
-    """合并扫描 fullscale/ 与 chinese/ 两个目录,返回带目录前缀的下拉列表。
+    """递归扫描 prompts/ 下全部层级的 *.md,返回带相对路径的下拉列表。
 
-    选项形如 "fullscale/English_Master_v2.md" / "chinese/Chinese_Master_Refined.md",
-    按修改时间倒序混排(新的在前)。供合并后的单一扩写节点使用。
+    选项形如 "fullscale/English_Master_v2.md"、"prompt/xxx.md",
+    按修改时间倒序混排(新的在前)。任意子目录、任意深度都会被收录——
+    新建子目录/新文件后重启 ComfyUI(或按 R 刷新)即出现在下拉,
+    无需改代码。
     """
     files = []
-    for subdir in ("fullscale", "chinese"):
-        for p in glob.glob(os.path.join(_preset_dir(subdir), "*.md")):
-            files.append((subdir + "/" + os.path.basename(p),
-                          os.path.getmtime(p)))
+    for root, _dirs, names in os.walk(PROMPTS_DIR):
+        for n in names:
+            if not n.lower().endswith(".md"):
+                continue
+            p = os.path.join(root, n)
+            rel = os.path.relpath(p, PROMPTS_DIR).replace("\\", "/")
+            files.append((rel, os.path.getmtime(p)))
     files.sort(key=lambda x: -x[1])
     names = [name for name, _ in files]
     if not names:
@@ -358,6 +397,11 @@ def resolve_preset_path(name_or_path, subdir):
             raw = raw[len(_pre):]
             break
     has_sep = ("/" in raw) or ("\\" in raw) or (":" in raw)
+    # 相对路径形式("prompt/xxx.md" 等,来自递归下拉):先在 prompts/ 下解析
+    if has_sep and not os.path.isabs(raw) and (":" not in raw):
+        p = os.path.normpath(os.path.join(PROMPTS_DIR, raw))
+        if os.path.isfile(p):
+            return os.path.abspath(p)
     if has_sep:
         path = os.path.abspath(raw)
     else:
@@ -911,7 +955,8 @@ def chat_gguf(gguf_path, temperature, max_tokens, messages,
 
 def run_enhance(handle, text, mode_display, subdir, system_preset,
                 mode_instructions, node_label, tier_key=None,
-                tier_texts=None, custom_preset=""):
+                tier_texts=None, custom_preset="",
+                length_limit=False, target_chars=0):
     """工作节点的公共执行路径(模型/参数全部来自加载器句柄)。
 
     handle: PSModelHandle,由加载器节点输出。
@@ -919,6 +964,8 @@ def run_enhance(handle, text, mode_display, subdir, system_preset,
     tier_key: 'SFW'|'Suggestive'|'NSFW'|'Auto';Auto 或 None 都不追加覆盖段。
     tier_texts: {'SFW':..,'Suggestive':..,'NSFW':..} 节点面板上的自定义档位
                 指令;某档为空时回退内置 TIER_OVERRIDE_EN。
+    length_limit/target_chars: 节点「字数限制」开关与「目标字数」;开关打开且
+                目标>0 时追加长度覆盖段,优先级最高(压过 master 与 refine)。
     """
     if handle is None or not getattr(handle, "settings", None):
         raise RuntimeError(
@@ -977,6 +1024,18 @@ def run_enhance(handle, text, mode_display, subdir, system_preset,
             or TIER_OVERRIDE_EN.get(tier_key, "")
         if tier_text:
             system_parts.append(tier_text)
+    # 字数限制(节点开关):追加在最末,优先级压过 master 与 refine 的长度规则
+    target_chars = int(target_chars or 0)
+    length_active = bool(length_limit) and target_chars > 0
+    if length_active:
+        tpl = LENGTH_OVERRIDE_ZH if subdir == "chinese" else LENGTH_OVERRIDE_EN
+        system_parts.append(tpl.format(n=target_chars))
+        # 软提醒:目标折算 token 若逼近 最大token,提前在控制台喊一声
+        est_tokens = target_chars // 3        # 英文 ~3-4 字符/token,取保守值
+        if est_tokens > int(max_tokens) * 0.9:
+            print(f"[PromptScale] 注意:目标字数 {target_chars} 约需 {est_tokens}"
+                  f" token,已接近/超过「最大token」{max_tokens},"
+                  f"可能被硬截断——建议调大加载器的最大token。")
     system = "\n\n".join(system_parts)
 
     messages = [
@@ -984,12 +1043,14 @@ def run_enhance(handle, text, mode_display, subdir, system_preset,
         {"role": "user", "content": text},
     ]
 
-    # 控制台一行状态:思考开关当前是否生效(排障用,肉眼可见)
+    # 控制台一行状态:模式/思考开关/档位/长度限制(排障用,肉眼可见)
     short_model = (model or "").replace("\\", "/").rsplit("/", 1)[-1]
-    print("[PromptScale] 思考=%s | 档位=%s | master=%s | 模型=%s"
-          % ("开(保留思考原文,输出会含思维链)" if not disable_thinking
+    print("[PromptScale] 模式=%s | 思考=%s | 档位=%s | 字数=%s | master=%s | 模型=%s"
+          % (mode_key,
+             "开(保留思考原文,输出会含思维链)" if not disable_thinking
              else "关(请求级禁用+输出剥离)",
              tier_key or "Auto",
+             ("约%d字" % target_chars) if length_active else "master默认",
              (preset_ref or "").rsplit("/", 1)[-1],
              short_model))
 
@@ -1026,6 +1087,7 @@ def run_enhance(handle, text, mode_display, subdir, system_preset,
         "model": model,
         "input_chars": len(text),
         "output_chars": len(content),
+        "length_limit": ("约%d字" % target_chars) if length_active else "master默认",
         "total_latency_s": round(time.time() - t0, 1),
         "api_latency_s": round(api_latency, 1),
         "usage": usage,
