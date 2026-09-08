@@ -107,8 +107,13 @@ MODE_INSTRUCTION_EN = {
         "do not remove, merge, replace or add any of them. Do NOT compress: "
         "output length must be equal to or slightly longer than the input, "
         "and any target length range stated in the framework above is "
-        "SUSPENDED for this mode. Only fix grammar, wording, repetition, "
-        "flow and consistency. Output the prompt only."
+        "SUSPENDED for this mode. PRESERVE ALL STRUCTURAL MARKERS IN PLACE — "
+        "subject labels like 'First Woman (foreground):' or 'Second Woman "
+        "(background):', section headers like 'Lighting:' or 'Environment & "
+        "Style:' — these are functional subject-separation anchors for image "
+        "models and must NOT be dissolved into flowing prose. Polish only "
+        "WITHIN each segment: fix grammar, wording, repetition and "
+        "consistency. Output the prompt only."
     ),
 }
 
@@ -128,8 +133,11 @@ MODE_INSTRUCTION_ZH = {
         "下面的用户消息是一段已经写好的完整提示词。请做保真润色:逐条保留"
         "输入中的全部具体细节(主体、姿态、服装、配饰、纹身、灯光、镜头等),"
         "不得删除、合并、替换或新增任何内容;禁止压缩,输出长度须与输入相当"
-        "或略长,上面框架给出的任何目标长度区间对本模式不生效。只修正语法、"
-        "用词、重复、衔接与一致性。只输出提示词本身。"
+        "或略长,上面框架给出的任何目标长度区间对本模式不生效。所有结构标记"
+        "必须原位保留——主体标签(如 First Woman (foreground):、Second Woman "
+        "(background):)与分段标头(如 Lighting:、Environment & Style:)是"
+        "图像模型的主体分割锚点,严禁融成流畅散文;只在每个分段内部修正语法、"
+        "用词、重复与一致性。只输出提示词本身。"
     ),
 }
 
